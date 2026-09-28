@@ -165,6 +165,7 @@ checksum = "91a519e400b968b4ddf2933aeb5b75752d73b27e7aeaab055612140683fcd059"
 dependencies = [
  "async-select",
  "asyncs-sync",
+ "spawns",
  "spawns-core",
 ]
 
@@ -770,6 +771,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "linkme"
+version = "0.3.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3045e122bd98aef8ec3ad58ce84f0791f64e70163d1a02710af4aa11a4d54cc5"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77060ebe535362c3da75682cd17b0431017b6e7c5661e714fc69a7ad017d1301"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1087,10 +1108,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "spawns"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8af41bca015637549a86dd319733953067982368b00a1aa1b9249b44a8b3fde9"
+dependencies = [
+ "spawns-compat",
+ "spawns-core",
+]
+
+[[package]]
+name = "spawns-compat"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "302ec2aa72b920e30b02e7dd7b7632b038731efd832a5bad452736de07b5b3df"
+dependencies = [
+ "linkme",
+ "spawns-core",
+ "tokio",
+]
+
+[[package]]
 name = "spawns-core"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a16f73dcebb4e44f93258cc9712d57f3c076f67b91163d6ded5a675577f5cdc5"
+dependencies = [
+ "linkme",
+]
 
 [[package]]
 name = "static_assertions"
