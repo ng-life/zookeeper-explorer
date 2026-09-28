@@ -1,0 +1,9 @@
+listen = "127.0.0.1:8080"
+
+[[clusters]]
+name = "开发环境"
+address = "127.0.0.1:2181"
+
+[[clusters]]
+name = "生产集群"
+address = "zk-1:2181,zk-2:2181,zk-3:2181"
