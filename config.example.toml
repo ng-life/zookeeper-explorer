@@ -1,4 +1,6 @@
 listen = "127.0.0.1:8080"
+# Recursive node deletion is disabled by default. Set true only when required.
+allow_delete = false
 
 [[clusters]]
 name = "开发环境"

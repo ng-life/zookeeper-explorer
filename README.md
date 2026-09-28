@@ -14,6 +14,7 @@ cp config.example.toml config.toml
 
 ```toml
 listen = "127.0.0.1:8080"
+allow_delete = false
 
 [[clusters]]
 name = "开发环境"
@@ -36,6 +37,15 @@ cargo run -- --config config.toml
 cargo run -- --listen 127.0.0.1:8080 --zk '开发=127.0.0.1:2181' --zk '测试=zk-a:2181,zk-b:2181'
 ```
 
+递归删除开关默认关闭。可在 `config.toml` 设置 `allow_delete = true`，或在启动时覆盖配置：
+
+```sh
+cargo run -- --config config.toml --allow-delete
+cargo run -- --config config.toml --disable-delete
+```
+
+服务端会校验该开关；关闭时网页不显示删除按钮，删除 API 也会拒绝请求。
+
 打开 <http://127.0.0.1:8080>。集群连接在首次浏览时建立。若地址包含 chroot，可按 ZooKeeper 客户端地址格式在端口后附加路径。
 
 ## 单文件构建
@@ -47,3 +57,12 @@ cargo build --release
 ```
 
 输出为 `target/release/zookeeper-explorer`（Windows 上为 `target/release/zookeeper-explorer.exe`）。将可执行文件和 `config.toml` 放在一起即可运行。
+
+## GitHub Release
+
+推送形如 `v0.1.0` 的标签后，GitHub Actions 会构建并创建 Release，附带 Linux x86_64 与 macOS Apple Silicon arm64 可执行文件：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```

@@ -29,6 +29,12 @@ struct Args {
     /// ZooKeeper ensemble, repeatable (overrides configured clusters)
     #[arg(long = "zk", value_name = "NAME=HOSTS")]
     clusters: Vec<String>,
+    /// Enable destructive recursive node deletion (overrides config)
+    #[arg(long, conflicts_with = "disable_delete")]
+    allow_delete: bool,
+    /// Disable recursive node deletion (overrides config)
+    #[arg(long, conflicts_with = "allow_delete")]
+    disable_delete: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -43,6 +49,8 @@ struct Config {
     listen: SocketAddr,
     #[serde(default)]
     clusters: Vec<Cluster>,
+    #[serde(default)]
+    allow_delete: bool,
 }
 
 fn default_listen() -> SocketAddr {
@@ -52,6 +60,7 @@ fn default_listen() -> SocketAddr {
 #[derive(Clone)]
 struct AppState {
     clusters: Vec<Cluster>,
+    allow_delete: bool,
     clients: Arc<RwLock<HashMap<usize, Client>>>,
 }
 
@@ -88,6 +97,7 @@ async fn main() -> anyhowless::Result<()> {
         Config {
             listen: default_listen(),
             clusters: Vec::new(),
+            allow_delete: false,
         }
     };
     if let Some(listen) = args.listen {
@@ -106,13 +116,20 @@ async fn main() -> anyhowless::Result<()> {
             })
             .collect();
     }
+    if args.allow_delete {
+        config.allow_delete = true;
+    } else if args.disable_delete {
+        config.allow_delete = false;
+    }
     let state = AppState {
         clusters: config.clusters,
+        allow_delete: config.allow_delete,
         clients: Arc::new(RwLock::new(HashMap::new())),
     };
     let app = Router::new()
         .route("/", get(index))
         .route("/api/clusters", get(list_clusters))
+        .route("/api/settings", get(get_settings))
         .route("/api/clusters/{id}/nodes", get(list_nodes))
         .route("/api/clusters/{id}/node/download", get(download_node))
         .route("/api/clusters/{id}/nodes", delete(delete_node))
@@ -134,6 +151,17 @@ async fn index() -> Html<&'static str> {
 
 async fn list_clusters(State(state): State<AppState>) -> Json<Vec<Cluster>> {
     Json(state.clusters.clone())
+}
+
+#[derive(Serialize)]
+struct Settings {
+    allow_delete: bool,
+}
+
+async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
+    Json(Settings {
+        allow_delete: state.allow_delete,
+    })
 }
 
 async fn list_nodes(
@@ -269,6 +297,13 @@ async fn delete_node(
     Path(id): Path<usize>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Json<DeleteResponse>, (StatusCode, String)> {
+    if !state.allow_delete {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Recursive deletion is disabled. Enable allow_delete in config or pass --allow-delete."
+                .into(),
+        ));
+    }
     let path = normalize_path(query.get("path").map(String::as_str).unwrap_or("/"))?;
     if path == "/" {
         return Err((
