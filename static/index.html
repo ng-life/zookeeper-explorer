@@ -10,6 +10,9 @@
   <style>
     .detail-actions{display:flex;gap:8px;margin:10px 0 16px}.action-link,.action-button,.format-select{font:inherit;font-size:12px;border:1px solid #d0d5dd;background:#fff;border-radius:7px;padding:7px 10px;color:#344054;text-decoration:none;cursor:pointer}.action-link:hover,.action-button:hover{background:#f9fafb}.action-button.danger{color:#b42318;border-color:#fecdca}.action-button.danger:hover{background:#fef3f2}.format-bar{display:flex;align-items:center;gap:8px;margin:16px 0 7px}.format-bar .detail-label{margin:0 auto 0 0}.format-select{padding:5px 8px}.data .token-key{color:#84caff}.data .token-string{color:#a6f4c5}.data .token-number{color:#fdb022}.data .token-bool{color:#d6bbfb}.data .token-null{color:#fda29b}.data .token-punctuation{color:#98a2b3}.data .token-comment{color:#98a2b3;font-style:italic}
   </style>
+  <style>
+    .node-icon.loading{background:#f2f4f7;color:#98a2b3}.metadata-error{color:#b42318}.meta-retry{border:0;background:transparent;color:#b42318;cursor:pointer;font:inherit;padding:0}
+  </style>
 </head>
 <body>
 <div class="shell">
@@ -32,9 +35,63 @@ const $=id=>document.getElementById(id);let clusters=[],active=-1,currentPath='/
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function init(){try{const [clusterResponse,settingsResponse]=await Promise.all([fetch('/api/clusters'),fetch('/api/settings')]);clusters=await clusterResponse.json();if(settingsResponse.ok)allowDelete=(await settingsResponse.json()).allow_delete===true;$('clusterCount').textContent=`· ${clusters.length}`;$('clusters').innerHTML=clusters.length?clusters.map((c,i)=>`<button class="cluster" data-id="${i}"><span class="cluster-icon">◈</span><span class="cluster-text"><div class="cluster-name">${esc(c.name)}</div><div class="cluster-host">${esc(c.address)}</div></span></button>`).join(''):'<div style="padding:10px;color:#98a2b3;font-size:12px">未配置集群</div>';$('clusters').querySelectorAll('.cluster').forEach(b=>b.onclick=()=>choose(+b.dataset.id));if(clusters.length)choose(0)}catch(e){error('无法加载集群列表')}}
 function choose(id){active=id;currentPath='/';selected=null;formatMode='auto';document.querySelectorAll('.cluster').forEach((b,i)=>b.classList.toggle('active',i===id));$('title').textContent=clusters[id].name;$('subtitle').textContent=clusters[id].address;load()}
-async function load(path=currentPath){if(active<0)return;if(path!==currentPath)formatMode='auto';currentPath=path;$('state').textContent='正在读取';$('error').innerHTML='';$('content').innerHTML='<div class="welcome">正在读取 ZooKeeper 节点…</div>';try{const r=await fetch(`/api/clusters/${active}/nodes?path=${encodeURIComponent(path)}`);const body=await r.text();if(!r.ok)throw Error(body||'读取失败');render(JSON.parse(body))}catch(e){$('content').innerHTML='';error(e.message);$('state').textContent='连接异常'}}
+async function load(path=currentPath){if(active<0)return;if(nodeMetadataObserver)nodeMetadataObserver.disconnect();if(path!==currentPath)formatMode='auto';currentPath=path;$('state').textContent='正在读取';$('error').innerHTML='';$('content').innerHTML='<div class="welcome">正在读取 ZooKeeper 节点…</div>';try{const r=await fetch(`/api/clusters/${active}/nodes?path=${encodeURIComponent(path)}`);const body=await r.text();if(!r.ok)throw Error(body||'读取失败');render(JSON.parse(body))}catch(e){$('content').innerHTML='';error(e.message);$('state').textContent='连接异常'}}
 function error(msg){$('error').innerHTML=`<div class="alert">${esc(msg)}</div>`;$('summary').textContent='请检查地址、网络或访问权限'}
-function render(d){$('state').textContent='连接正常';$('crumbs').innerHTML=crumbHTML(d.path);$('crumbs').querySelectorAll('[data-path]').forEach(b=>b.onclick=()=>load(b.dataset.path));$('summary').textContent=`${d.nodes.length} 个子节点 · 节点数据 ${d.data_len} 字节`;const rows=d.nodes.map(n=>`<div class="row open-node" data-path="${esc(n.path)}"><div class="name-cell"><span class="node-icon ${n.is_dir?'':'file'}">${n.is_dir?'▰':'▤'}</span><div style="min-width:0"><div class="node-name">${esc(n.name)}</div><div class="node-sub">${esc(n.path)}</div></div></div><div class="type">${n.is_dir?'目录':'节点'}</div><div class="count">${n.children_count?`${n.children_count} 项`:`${n.data_len} B`}</div></div>`).join('');const isText=d.data!==null;const encodedPath=encodeURIComponent(d.path);const detail=d.path==='/'?'<div class="detail"><h3>节点详情</h3><div class="meta">选择具体节点以查看其数据内容。</div></div>':`<div class="detail"><h3>节点详情</h3><div class="detail-label">完整路径</div><div class="pathval">${esc(d.path)}</div><div class="detail-actions"><a class="action-link" href="/api/clusters/${active}/node/download?path=${encodedPath}">⇩ 下载内容</a>${allowDelete?'<button class="action-button danger" id="deleteNode">删除节点</button>':''}</div><div class="format-bar"><div class="detail-label">数据内容 · ${d.data_len} B</div>${isText?`<select id="formatMode" class="format-select" aria-label="内容格式"><option value="auto">自动识别</option><option value="plain">纯文本</option><option value="json">JSON</option><option value="yaml">YAML</option></select>`:''}</div><pre class="data" id="nodeData">${isText?formatText(d.data,formatMode,d.path):(d.data_base64?`二进制数据（Base64）\n${esc(d.data_base64)}`:'（空）')}</pre><div class="detail-label">编码</div><div class="meta">${isText?'UTF-8 文本':'Base64 二进制'}</div></div>`;$('content').innerHTML=`<div class="panel" style="box-shadow:none"><div class="table-head"><div>名称</div><div>类型</div><div>子节点 / 大小</div></div>${rows||'<div class="empty">此节点下没有子节点</div>'}</div>${detail}`;$('content').querySelectorAll('.open-node').forEach(row=>row.onclick=()=>load(row.dataset.path));const selector=$('formatMode');if(selector){selector.value=formatMode;selector.onchange=()=>{formatMode=selector.value;$('nodeData').innerHTML=formatText(d.data,formatMode,d.path)}}const deleteButton=$('deleteNode');if(deleteButton)deleteButton.onclick=()=>removeNode(d.path)}
+function render(d){
+  $('state').textContent='连接正常';
+  $('crumbs').innerHTML=crumbHTML(d.path);
+  $('crumbs').querySelectorAll('[data-path]').forEach(b=>b.onclick=()=>load(b.dataset.path));
+  $('summary').textContent=`${d.nodes.length} 个子节点 · 节点数据 ${d.data_len} 字节`;
+  const rows=d.nodes.map(n=>`<div class="row open-node" data-path="${esc(n.path)}" data-cluster="${active}">
+    <div class="name-cell"><span class="node-icon loading">…</span><div style="min-width:0"><div class="node-name">${esc(n.name)}</div><div class="node-sub">${esc(n.path)}</div></div></div>
+    <div class="type">加载中</div><div class="count">加载中</div></div>`).join('');
+  const isText=d.data!==null,encodedPath=encodeURIComponent(d.path);
+  const detail=d.path==='/'?'<div class="detail"><h3>节点详情</h3><div class="meta">选择具体节点以查看其数据内容。</div></div>':`<div class="detail"><h3>节点详情</h3><div class="detail-label">完整路径</div><div class="pathval">${esc(d.path)}</div><div class="detail-actions"><a class="action-link" href="/api/clusters/${active}/node/download?path=${encodedPath}">⇩ 下载内容</a>${allowDelete?'<button class="action-button danger" id="deleteNode">删除节点</button>':''}</div><div class="format-bar"><div class="detail-label">数据内容 · ${d.data_len} B</div>${isText?`<select id="formatMode" class="format-select" aria-label="内容格式"><option value="auto">自动识别</option><option value="plain">纯文本</option><option value="json">JSON</option><option value="yaml">YAML</option></select>`:''}</div><pre class="data" id="nodeData">${isText?formatText(d.data,formatMode,d.path):(d.data_base64?`二进制数据（Base64）\n${esc(d.data_base64)}`:'（空）')}</pre><div class="detail-label">编码</div><div class="meta">${isText?'UTF-8 文本':'Base64 二进制'}</div></div>`;
+  $('content').innerHTML=`<div class="panel" style="box-shadow:none"><div class="table-head"><div>名称</div><div>类型</div><div>子节点 / 大小</div></div>${rows||'<div class="empty">此节点下没有子节点</div>'}</div>${detail}`;
+  $('content').querySelectorAll('.open-node').forEach(row=>row.onclick=()=>load(row.dataset.path));
+  const selector=$('formatMode');
+  if(selector){selector.value=formatMode;selector.onchange=()=>{formatMode=selector.value;$('nodeData').innerHTML=formatText(d.data,formatMode,d.path)}}
+  const deleteButton=$('deleteNode');
+  if(deleteButton)deleteButton.onclick=()=>removeNode(d.path);
+  observeNodeRows();
+}
+const nodeMetadataCache=new Map(),nodeMetadataRequests=new Map();
+let nodeMetadataObserver=null;
+async function fetchNodeMetadata(clusterId,path){
+  const key=`${clusterId}:${path}`;
+  if(nodeMetadataCache.has(key))return nodeMetadataCache.get(key);
+  if(nodeMetadataRequests.has(key))return nodeMetadataRequests.get(key);
+  const request=(async()=>{const r=await fetch(`/api/clusters/${clusterId}/node/metadata?path=${encodeURIComponent(path)}`);const body=await r.text();if(!r.ok)throw Error(body||'读取节点信息失败');const metadata=JSON.parse(body);nodeMetadataCache.set(key,metadata);return metadata})();
+  nodeMetadataRequests.set(key,request);
+  try{return await request}finally{nodeMetadataRequests.delete(key)}
+}
+function applyNodeMetadata(row,metadata){
+  if(!row.isConnected)return;
+  const icon=row.querySelector('.node-icon'),type=row.querySelector('.type'),count=row.querySelector('.count');
+  icon.classList.remove('loading');icon.classList.toggle('file',!metadata.is_dir);icon.textContent=metadata.is_dir?'▰':'▤';
+  type.textContent=metadata.is_dir?'目录':'节点';type.classList.remove('metadata-error');
+  count.textContent=metadata.children_count?`${metadata.children_count} 项`:`${metadata.data_len} B`;
+}
+function showMetadataError(row){
+  if(!row.isConnected)return;
+  const icon=row.querySelector('.node-icon'),type=row.querySelector('.type'),count=row.querySelector('.count');
+  icon.classList.remove('loading');icon.textContent='!';type.textContent='加载失败';type.classList.add('metadata-error');
+  count.innerHTML='<button class="meta-retry" type="button">重试</button>';
+  count.querySelector('button').onclick=event=>{event.stopPropagation();loadNodeMetadata(row)};
+}
+async function loadNodeMetadata(row){
+  try{const metadata=await fetchNodeMetadata(row.dataset.cluster,row.dataset.path);applyNodeMetadata(row,metadata)}
+  catch(_error){showMetadataError(row)}
+}
+function observeNodeRows(){
+  if(nodeMetadataObserver)nodeMetadataObserver.disconnect();
+  const rows=[...$('content').querySelectorAll('.open-node')];
+  if(!('IntersectionObserver' in window)){rows.forEach(loadNodeMetadata);return}
+  nodeMetadataObserver=new IntersectionObserver(entries=>{
+    for(const entry of entries){if(entry.isIntersecting){nodeMetadataObserver.unobserve(entry.target);loadNodeMetadata(entry.target)}}
+  },{root:null,rootMargin:'0px',threshold:0});
+  rows.forEach(row=>nodeMetadataObserver.observe(row));
+}
 function formatText(text,mode,path){const inferred=mode==='auto'?(/\.json$/i.test(path)?'json':/\.ya?ml$/i.test(path)?'yaml':'plain'):mode;if(inferred==='json')return highlightJson(text);if(inferred==='yaml')return highlightYaml(text);return esc(text)}
 function spanToken(token,type){return `<span class="token-${type}">${esc(token)}</span>`}
 function highlightJson(text){const pattern=/("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true\b|false\b)|(null\b)|([{}\[\],:])/g;let out='',last=0,match;while((match=pattern.exec(text))){out+=esc(text.slice(last,match.index));const type=match[1]?'key':match[2]?'string':match[3]?'number':match[4]?'bool':match[5]?'null':'punctuation';out+=spanToken(match[0],type);last=pattern.lastIndex}return out+esc(text.slice(last))}

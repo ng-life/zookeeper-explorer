@@ -68,6 +68,10 @@ struct AppState {
 struct NodeEntry {
     name: String,
     path: String,
+}
+
+#[derive(Serialize)]
+struct NodeMetadata {
     is_dir: bool,
     data_len: i32,
     children_count: i32,
@@ -131,6 +135,7 @@ async fn main() -> anyhowless::Result<()> {
         .route("/api/clusters", get(list_clusters))
         .route("/api/settings", get(get_settings))
         .route("/api/clusters/{id}/nodes", get(list_nodes))
+        .route("/api/clusters/{id}/node/metadata", get(get_node_metadata))
         .route("/api/clusters/{id}/node/download", get(download_node))
         .route("/api/clusters/{id}/nodes", delete(delete_node))
         .with_state(state);
@@ -197,32 +202,21 @@ async fn list_nodes(
             format!("Could not list {path}: {error}"),
         )
     })?;
-    let mut nodes = Vec::with_capacity(children.len());
-    for name in children {
-        let child_path = if path == "/" {
-            format!("/{name}")
-        } else {
-            format!("{path}/{name}")
-        };
-        let (grandchildren, stat) = client.get_children(&child_path).await.map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Could not inspect {child_path}: {error}"),
-            )
-        })?;
-        nodes.push(NodeEntry {
-            name,
-            path: child_path,
-            is_dir: !grandchildren.is_empty(),
-            data_len: stat.data_length,
-            children_count: grandchildren.len() as i32,
-        });
-    }
-    nodes.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    let mut nodes: Vec<_> = children
+        .into_iter()
+        .map(|name| {
+            let child_path = if path == "/" {
+                format!("/{name}")
+            } else {
+                format!("{path}/{name}")
+            };
+            NodeEntry {
+                name,
+                path: child_path,
+            }
+        })
+        .collect();
+    nodes.sort_by(|a: &NodeEntry, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     let (data, data_base64, data_len) = if path == "/" {
         (None, None, 0)
@@ -247,6 +241,30 @@ async fn list_nodes(
         data,
         data_base64,
         data_len,
+    }))
+}
+
+async fn get_node_metadata(
+    State(state): State<AppState>,
+    Path(id): Path<usize>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Json<NodeMetadata>, (StatusCode, String)> {
+    let path = normalize_path(query.get("path").map(String::as_str).unwrap_or("/"))?;
+    let client = get_client(&state, id).await?;
+    let stat = client
+        .check_stat(&path)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Could not inspect {path}: {error}"),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, format!("Node not found: {path}")))?;
+    Ok(Json(NodeMetadata {
+        is_dir: stat.num_children > 0,
+        data_len: stat.data_length,
+        children_count: stat.num_children,
     }))
 }
 
