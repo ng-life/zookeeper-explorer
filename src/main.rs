@@ -1,10 +1,11 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{delete, get},
     Json, Router,
 };
 use clap::Parser;
@@ -113,6 +114,8 @@ async fn main() -> anyhowless::Result<()> {
         .route("/", get(index))
         .route("/api/clusters", get(list_clusters))
         .route("/api/clusters/{id}/nodes", get(list_nodes))
+        .route("/api/clusters/{id}/node/download", get(download_node))
+        .route("/api/clusters/{id}/nodes", delete(delete_node))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(address = %config.listen, "ZooKeeper Explorer is ready");
@@ -217,6 +220,119 @@ async fn list_nodes(
         data_base64,
         data_len,
     }))
+}
+
+async fn download_node(
+    State(state): State<AppState>,
+    Path(id): Path<usize>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let path = normalize_path(query.get("path").map(String::as_str).unwrap_or("/"))?;
+    if path == "/" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot download the root node".into(),
+        ));
+    }
+    let client = get_client(&state, id).await?;
+    let (bytes, _) = client.get_data(&path).await.map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Could not read {path}: {error}"),
+        )
+    })?;
+    let name = path.rsplit('/').next().unwrap_or("node");
+    let disposition = format!(
+        "attachment; filename*=UTF-8''{}",
+        encode_header_filename(name)
+    );
+    let mut response = Body::from(bytes).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&disposition)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid node name".into()))?,
+    );
+    Ok(response)
+}
+
+#[derive(Serialize)]
+struct DeleteResponse {
+    deleted_nodes: usize,
+}
+
+async fn delete_node(
+    State(state): State<AppState>,
+    Path(id): Path<usize>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Json<DeleteResponse>, (StatusCode, String)> {
+    let path = normalize_path(query.get("path").map(String::as_str).unwrap_or("/"))?;
+    if path == "/" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot delete the root node".into(),
+        ));
+    }
+    let client = get_client(&state, id).await?;
+    let mut stack = vec![(path, false)];
+    let mut deleted_nodes = 0;
+    while let Some((node_path, visited)) = stack.pop() {
+        if visited {
+            client.delete(&node_path, None).await.map_err(|error| {
+                (
+                    StatusCode::CONFLICT,
+                    format!("Recursive delete stopped at {node_path}: {error}; {deleted_nodes} child node(s) already deleted"),
+                )
+            })?;
+            deleted_nodes += 1;
+            continue;
+        }
+        let (children, _) = client.get_children(&node_path).await.map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Could not inspect {node_path} for recursive deletion: {error}; {deleted_nodes} child node(s) already deleted"),
+            )
+        })?;
+        stack.push((node_path.clone(), true));
+        for child in children {
+            stack.push((format!("{node_path}/{child}"), false));
+        }
+    }
+    Ok(Json(DeleteResponse { deleted_nodes }))
+}
+
+async fn get_client(state: &AppState, id: usize) -> Result<Client, (StatusCode, String)> {
+    let cluster = state
+        .clusters
+        .get(id)
+        .ok_or((StatusCode::NOT_FOUND, "Unknown cluster".into()))?;
+    let mut clients = state.clients.write().await;
+    if let Some(client) = clients.get(&id) {
+        return Ok(client.clone());
+    }
+    let client = Client::connect(&cluster.address).await.map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("ZooKeeper connection failed: {error}"),
+        )
+    })?;
+    clients.insert(id, client.clone());
+    Ok(client)
+}
+
+fn encode_header_filename(name: &str) -> String {
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn normalize_path(path: &str) -> Result<String, (StatusCode, String)> {

@@ -1,6 +1,8 @@
 # ZooKeeper Explorer
 
-一个用 Rust 编写的轻量 Web ZooKeeper 节点浏览器。首页列出已配置集群，支持多个集群切换、逐层浏览节点、查看节点数据。当前提供只读操作。
+一个用 Rust 编写的轻量 Web ZooKeeper 节点浏览器。首页列出多个已配置集群，支持切换集群、逐层浏览节点、查看和下载节点数据，以及递归删除节点。
+
+节点详情支持下载原始数据、按 `.json`/`.yaml`/`.yml` 文件名自动高亮 JSON/YAML，也可以手动切换格式。支持递归删除节点；操作前会显示完整节点路径并二次确认，根节点 `/` 不允许删除。
 
 ## 配置
 
@@ -35,3 +37,13 @@ cargo run -- --listen 127.0.0.1:8080 --zk '开发=127.0.0.1:2181' --zk '测试=z
 ```
 
 打开 <http://127.0.0.1:8080>。集群连接在首次浏览时建立。若地址包含 chroot，可按 ZooKeeper 客户端地址格式在端口后附加路径。
+
+## 单文件构建
+
+HTML 已通过 `include_str!` 编译进程序，无需额外发布静态资源目录。构建当前操作系统的 release 可执行文件：
+
+```sh
+cargo build --release
+```
+
+输出为 `target/release/zookeeper-explorer`（Windows 上为 `target/release/zookeeper-explorer.exe`）。将可执行文件和 `config.toml` 放在一起即可运行。
