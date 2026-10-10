@@ -1,2 +1,3 @@
-/target/
+/dist/
+/zookeeper-explorer
 /config.toml
