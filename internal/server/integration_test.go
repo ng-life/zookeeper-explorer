@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/base64"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-zookeeper/zk"
+	"github.com/ng-life/zookeeper-explorer/internal/config"
 )
 
 // Opt in only against an isolated local ZooKeeper instance. This test creates
@@ -26,12 +27,15 @@ func TestZooKeeperIntegration(t *testing.T) {
 	if err != nil || ip == nil || !ip.IsLoopback() {
 		t.Fatal("ZK_TEST_ADDRESS must be a loopback host:port without chroot")
 	}
-	client, err := connect(address)
+	seed, events, err := zk.Connect([]string{address}, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	seed := client.(*rootedClient).conn
+	defer seed.Close()
+	go func() {
+		for range events {
+		}
+	}()
 	root := fmt.Sprintf("/explorer-integration-%d", time.Now().UnixNano())
 	text := []byte(`{"message":"你好"}`)
 	binary := []byte{0xff, 0x00, 0xfe}
@@ -39,8 +43,8 @@ func TestZooKeeperIntegration(t *testing.T) {
 		path string
 		data []byte
 	}{{root, nil}, {root + "/目录", nil}, {root + "/目录/配置.json", text}, {root + "/目录/binary", binary}, {root + "/empty", nil}}
-	a := newApp(config{Clusters: []cluster{{"local", address}, {"chroot", address + root}}, AllowDelete: true})
-	defer a.close()
+	a := New(config.Config{Clusters: []config.Cluster{{Name: "local", Address: address}, {Name: "chroot", Address: address + root}}, AllowDelete: true})
+	defer a.Close()
 	defer func() {
 		w := request(a, "DELETE", "/api/clusters/0/nodes?"+url.Values{"path": {root}}.Encode())
 		if w.Code != 200 && !strings.Contains(w.Body.String(), "node does not exist") {

@@ -1,16 +1,16 @@
-package main
+package server
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-zookeeper/zk"
+	"github.com/ng-life/zookeeper-explorer/internal/config"
+	"github.com/ng-life/zookeeper-explorer/internal/zookeeper"
 )
 
 type fakeClient struct {
@@ -42,14 +42,14 @@ func (f *fakeClient) Delete(p string, _ int32) error {
 	return nil
 }
 func (f *fakeClient) Close() {}
-func testApp(f *fakeClient, enable bool) *app {
-	a := newApp(config{Clusters: []cluster{{"test", "localhost:2181"}}, AllowDelete: enable})
-	a.dial = func(string) (nodeClient, error) { return f, nil }
+func testApp(f *fakeClient, enable bool) *Server {
+	a := New(config.Config{Clusters: []config.Cluster{{Name: "test", Address: "localhost:2181"}}, AllowDelete: enable})
+	a.dial = func(string) (zookeeper.Client, error) { return f, nil }
 	return a
 }
-func request(a *app, method, target string) *httptest.ResponseRecorder {
+func request(a *Server, method, target string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	a.handler().ServeHTTP(w, httptest.NewRequest(method, target, nil))
+	a.Handler().ServeHTTP(w, httptest.NewRequest(method, target, nil))
 	return w
 }
 func TestNodesAndDownload(t *testing.T) {
@@ -122,26 +122,5 @@ func TestRecursiveDelete(t *testing.T) {
 		if !reflect.DeepEqual(f.deleted, want) {
 			t.Fatal(f.deleted)
 		}
-	}
-}
-func TestConfigAndChroot(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(file, []byte("listen='127.0.0.1:8090'\nallow_delete=true\n[[clusters]]\nname='test'\naddress='host:2181/app'\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := loadConfig([]string{"--config", file, "--disable-delete", "--zk", "new=a:2181,b:2181/root", "--listen", "127.0.0.1:9090"})
-	if err != nil || c.AllowDelete || c.Listen != "127.0.0.1:9090" || len(c.Clusters) != 1 || c.Clusters[0].Name != "new" {
-		t.Fatal(c, err)
-	}
-	if _, err := loadConfig([]string{"--allow-delete", "--disable-delete"}); err == nil {
-		t.Fatal("expected conflict")
-	}
-	servers, root, err := parseAddress(c.Clusters[0].Address)
-	if err != nil || len(servers) != 2 || root != "/root" {
-		t.Fatal(servers, root, err)
-	}
-	rc := rootedClient{root: root}
-	if rc.path("/") != "/root" || rc.path("/child") != "/root/child" {
-		t.Fatal("chroot translation")
 	}
 }

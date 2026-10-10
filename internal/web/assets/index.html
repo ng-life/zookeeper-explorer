@@ -13,6 +13,18 @@
   <style>
     .node-icon.loading{background:#f2f4f7;color:#98a2b3}.metadata-error{color:#b42318}.meta-retry{border:0;background:transparent;color:#b42318;cursor:pointer;font:inherit;padding:0}
   </style>
+  <style>
+    .format-bar{flex-wrap:wrap}.expand-data{font-size:11px;padding:5px 8px;white-space:nowrap}
+    body.viewer-open{overflow:hidden}
+    .data-viewer{width:min(1200px,calc(100vw - 48px));height:calc(100dvh - 64px);max-width:none;max-height:none;margin:auto;padding:0;border:1px solid #eaecf0;border-radius:12px;background:#fff;color:#1d2939;box-shadow:0 24px 64px #10182840}
+    .data-viewer::backdrop{background:#10182880}
+    .viewer-layout{height:100%;display:flex;flex-direction:column;padding:20px;gap:12px;min-height:0}
+    .viewer-header{display:flex;align-items:center;justify-content:space-between;gap:16px}.viewer-header h2{font-size:16px;margin:0}
+    .viewer-path{margin:0;flex:none;max-height:72px;overflow:auto}
+    .viewer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px}.viewer-toolbar .meta{margin:0}
+    .viewer-data{flex:1;min-height:0;max-height:none;margin:0}
+    @media(max-width:680px){.data-viewer{width:calc(100vw - 24px);height:calc(100dvh - 24px)}.viewer-layout{padding:14px}}
+  </style>
 </head>
 <body>
 <div class="shell">
@@ -30,6 +42,14 @@
     </main>
   </div>
 </div>
+<dialog id="dataViewer" class="data-viewer" aria-labelledby="viewerTitle" aria-describedby="viewerPath">
+  <div class="viewer-layout">
+    <header class="viewer-header"><h2 id="viewerTitle">数据内容</h2><button id="closeViewer" class="action-button" type="button" autofocus>关闭</button></header>
+    <div id="viewerPath" class="pathval viewer-path"></div>
+    <div class="viewer-toolbar"><div id="viewerMeta" class="meta"></div><select id="viewerFormat" class="format-select" aria-label="放大区域内容格式"><option value="auto">自动识别</option><option value="plain">纯文本</option><option value="json">JSON</option><option value="yaml">YAML</option></select></div>
+    <pre id="viewerData" class="data viewer-data" tabindex="0" aria-label="节点数据内容"></pre>
+  </div>
+</dialog>
 <script>
 const $=id=>document.getElementById(id);let clusters=[],active=-1,currentPath='/',selected=null,formatMode='auto',allowDelete=false,loadRequestId=0;
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -38,7 +58,7 @@ function choose(id){selectCluster(id,'/','push')}
 function selectCluster(id,path,historyMode){if(id<0||id>=clusters.length)return;active=id;currentPath=path;selected=null;formatMode='auto';document.querySelectorAll('.cluster').forEach((b,i)=>b.classList.toggle('active',i===id));$('title').textContent=clusters[id].name;$('subtitle').textContent=clusters[id].address;if(historyMode)writeLocation(id,path,historyMode);load(path)}
 function readLocation(){const params=new URLSearchParams(location.search),rawCluster=params.get('cluster'),parsedCluster=rawCluster===null?0:Number(rawCluster),cluster=Number.isInteger(parsedCluster)&&parsedCluster>=0&&parsedCluster<clusters.length?parsedCluster:0,rawPath=params.get('path')||'/';const path=rawPath.startsWith('/')&&!rawPath.includes('//')&&!rawPath.split('/').some(part=>part==='.'||part==='..')?rawPath:'/';return{cluster,path}}
 function writeLocation(cluster,path,mode='push'){const params=new URLSearchParams();params.set('cluster',String(cluster));if(path!=='/')params.set('path',path);const url=`${location.pathname}?${params.toString()}`;if(`${location.pathname}${location.search}`===url)return;history[`${mode}State`]({cluster,path},'',url)}
-async function load(path=currentPath){if(active<0)return;const requestId=++loadRequestId;if(nodeMetadataObserver)nodeMetadataObserver.disconnect();if(path!==currentPath){formatMode='auto';currentPath=path;writeLocation(active,path)}$('state').textContent='正在读取';$('error').innerHTML='';$('content').innerHTML='<div class="welcome">正在读取 ZooKeeper 节点…</div>';try{const r=await fetch(`/api/clusters/${active}/nodes?path=${encodeURIComponent(path)}`);const body=await r.text();if(!r.ok)throw Error(body||'读取失败');if(requestId!==loadRequestId)return;render(JSON.parse(body))}catch(e){if(requestId!==loadRequestId)return;$('content').innerHTML='';error(e.message);$('state').textContent='连接异常'}}
+async function load(path=currentPath){if(active<0)return;closeDataViewer();const requestId=++loadRequestId;if(nodeMetadataObserver)nodeMetadataObserver.disconnect();if(path!==currentPath){formatMode='auto';currentPath=path;writeLocation(active,path)}$('state').textContent='正在读取';$('error').innerHTML='';$('content').innerHTML='<div class="welcome">正在读取 ZooKeeper 节点…</div>';try{const r=await fetch(`/api/clusters/${active}/nodes?path=${encodeURIComponent(path)}`);const body=await r.text();if(!r.ok)throw Error(body||'读取失败');if(requestId!==loadRequestId)return;render(JSON.parse(body))}catch(e){if(requestId!==loadRequestId)return;$('content').innerHTML='';error(e.message);$('state').textContent='连接异常'}}
 function error(msg){$('error').innerHTML=`<div class="alert">${esc(msg)}</div>`;$('summary').textContent='请检查地址、网络或访问权限'}
 function render(d){
   $('state').textContent='连接正常';
@@ -49,15 +69,45 @@ function render(d){
     <div class="name-cell"><span class="node-icon loading">…</span><div style="min-width:0"><div class="node-name">${esc(n.name)}</div><div class="node-sub">${esc(n.path)}</div></div></div>
     <div class="type">加载中</div><div class="count">加载中</div></div>`).join('');
   const isText=d.data!==null,encodedPath=encodeURIComponent(d.path);
-  const detail=d.path==='/'?'<div class="detail"><h3>节点详情</h3><div class="meta">选择具体节点以查看其数据内容。</div></div>':`<div class="detail"><h3>节点详情</h3><div class="detail-label">完整路径</div><div class="pathval">${esc(d.path)}</div><div class="detail-actions"><a class="action-link" href="/api/clusters/${active}/node/download?path=${encodedPath}">⇩ 下载内容</a>${allowDelete?'<button class="action-button danger" id="deleteNode">删除节点</button>':''}</div><div class="format-bar"><div class="detail-label">数据内容 · ${d.data_len} B</div>${isText?`<select id="formatMode" class="format-select" aria-label="内容格式"><option value="auto">自动识别</option><option value="plain">纯文本</option><option value="json">JSON</option><option value="yaml">YAML</option></select>`:''}</div><pre class="data" id="nodeData">${isText?formatText(d.data,formatMode,d.path):(d.data_base64?`二进制数据（Base64）\n${esc(d.data_base64)}`:'（空）')}</pre><div class="detail-label">编码</div><div class="meta">${isText?'UTF-8 文本':'Base64 二进制'}</div></div>`;
+  const detail=d.path==='/'?'<div class="detail"><h3>节点详情</h3><div class="meta">选择具体节点以查看其数据内容。</div></div>':`<div class="detail"><h3>节点详情</h3><div class="detail-label">完整路径</div><div class="pathval">${esc(d.path)}</div><div class="detail-actions"><a class="action-link" href="/api/clusters/${active}/node/download?path=${encodedPath}">⇩ 下载内容</a>${allowDelete?'<button class="action-button danger" id="deleteNode">删除节点</button>':''}</div><div class="format-bar"><div class="detail-label">数据内容 · ${d.data_len} B</div>${isText?`<select id="formatMode" class="format-select" aria-label="内容格式"><option value="auto">自动识别</option><option value="plain">纯文本</option><option value="json">JSON</option><option value="yaml">YAML</option></select>`:''}<button class="action-button expand-data" id="expandData" type="button" aria-haspopup="dialog">⛶ 放大查看</button></div><pre class="data" id="nodeData">${isText?formatText(d.data,formatMode,d.path):(d.data_base64?`二进制数据（Base64）\n${esc(d.data_base64)}`:'（空）')}</pre><div class="detail-label">编码</div><div class="meta">${isText?'UTF-8 文本':'Base64 二进制'}</div></div>`;
   $('content').innerHTML=`<div class="panel" style="box-shadow:none"><div class="table-head"><div>名称</div><div>类型</div><div>子节点 / 大小</div></div>${rows||'<div class="empty">此节点下没有子节点</div>'}</div>${detail}`;
   $('content').querySelectorAll('.open-node').forEach(row=>row.onclick=()=>load(row.dataset.path));
   const selector=$('formatMode');
-  if(selector){selector.value=formatMode;selector.onchange=()=>{formatMode=selector.value;$('nodeData').innerHTML=formatText(d.data,formatMode,d.path)}}
+  if(selector){selector.value=formatMode;selector.onchange=()=>updateDataFormat(d,selector.value)}
+  const expandButton=$('expandData');
+  if(expandButton)expandButton.onclick=()=>openDataViewer(d);
   const deleteButton=$('deleteNode');
   if(deleteButton)deleteButton.onclick=()=>removeNode(d.path);
   observeNodeRows();
 }
+// Both views use the same data and format state; opening the viewer makes no request.
+function nodeDataHTML(d){return d.data!==null?formatText(d.data,formatMode,d.path):(d.data_base64?`二进制数据（Base64）\n${esc(d.data_base64)}`:'（空）')}
+function updateDataFormat(d,mode){
+  formatMode=mode;
+  if($('formatMode'))$('formatMode').value=mode;
+  $('viewerFormat').value=mode;
+  if($('nodeData'))$('nodeData').innerHTML=nodeDataHTML(d);
+  $('viewerData').innerHTML=nodeDataHTML(d);
+}
+function openDataViewer(d){
+  $('viewerPath').textContent=d.path;
+  $('viewerMeta').textContent=`${d.data_len} B · ${d.data!==null?'UTF-8 文本':'Base64 二进制'}`;
+  $('viewerFormat').hidden=d.data===null;
+  $('viewerFormat').value=formatMode;
+  $('viewerFormat').onchange=()=>updateDataFormat(d,$('viewerFormat').value);
+  $('viewerData').innerHTML=nodeDataHTML(d);
+  $('viewerData').scrollTop=0;
+  $('dataViewer').showModal();
+  document.body.classList.add('viewer-open');
+}
+function closeDataViewer(){if($('dataViewer').open)$('dataViewer').close()}
+$('closeViewer').onclick=closeDataViewer;
+$('dataViewer').addEventListener('close',()=>document.body.classList.remove('viewer-open'));
+$('dataViewer').addEventListener('click',event=>{
+  if(event.target!==$('dataViewer'))return;
+  const bounds=$('dataViewer').getBoundingClientRect();
+  if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)closeDataViewer();
+});
 const nodeMetadataCache=new Map(),nodeMetadataRequests=new Map();
 let nodeMetadataObserver=null;
 async function fetchNodeMetadata(clusterId,path){

@@ -1,4 +1,4 @@
-module zookeeper-explorer
+module github.com/ng-life/zookeeper-explorer
 
 go 1.23.0
 
