@@ -1,3 +1,4 @@
 /dist/
 /zookeeper-explorer
 /config.toml
+/.local-test/

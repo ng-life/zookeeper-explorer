@@ -19,3 +19,30 @@ func TestLoadOverrides(t *testing.T) {
 		t.Fatal("expected conflict")
 	}
 }
+
+func TestDefaultPath(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err = os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(original) })
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg"))
+	if got := DefaultPath(); got != filepath.Join(dir, "xdg", "zookeeper-explorer", "config.toml") {
+		t.Fatal(got)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", dir)
+	if got := DefaultPath(); got != filepath.Join(dir, ".config", "zookeeper-explorer", "config.toml") {
+		t.Fatal(got)
+	}
+	if err = os.WriteFile("config.toml", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DefaultPath(); got != "config.toml" {
+		t.Fatal(got)
+	}
+}

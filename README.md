@@ -12,6 +12,8 @@
 cmd/zookeeper-explorer/   命令入口、参数解析与退出信号
 internal/config/         TOML 配置与命令行覆盖
 internal/server/         HTTP 路由、节点操作、连接缓存及服务生命周期
+internal/cli/            一次性命令与动态 shell 补全
+internal/tui/            Bubble Tea 终端交互、节点读取及数据预览
 internal/zookeeper/      ZooKeeper 客户端、路径校验与 chroot 适配
 internal/web/            嵌入资源及 assets/index.html
 ```
@@ -101,3 +103,71 @@ ZK_TEST_ADDRESS=127.0.0.1:2181 go test -race -count=1 -run TestZooKeeperIntegrat
 git tag v0.1.0
 git push origin v0.1.0
 ```
+
+## 命令行
+
+无子命令时仍启动 Web 服务，也可以显式使用 `serve`。一次性命令直接连接 ZooKeeper，不需要启动 HTTP 服务：
+
+```sh
+./dist/zookeeper-explorer clusters --config config.toml
+./dist/zookeeper-explorer ls / --cluster test --config config.toml
+./dist/zookeeper-explorer get /config/example --cluster test --config config.toml
+./dist/zookeeper-explorer stat /config/example --cluster test --config config.toml --output json
+```
+
+`clusters` 只列出配置中的名称，不连接远端。多个集群必须用 `--cluster` 选择唯一名称；仅一个集群时可省略。全局参数可放在子命令前后，支持 `--config=文件`。配置读取顺序为：显式 `--config` → 当前目录 `config.toml` → `$XDG_CONFIG_HOME/zookeeper-explorer/config.toml`；未设置 `XDG_CONFIG_HOME` 时回退到 `~/.config/zookeeper-explorer/config.toml`（macOS 也使用此目录）。`--zk` 可覆盖配置中的集群。
+
+`ls PATH` 列出全部直接子节点并排序，不递归、不分页；`get PATH` 默认输出原始字节，不附加换行，可直接重定向到文件。`--output json` 下，`get` 返回 `path`、`data_base64` 和 `stat`，避免损失二进制数据；`stat` 输出 ZooKeeper 元数据。列表的文本输出转义控制字符。数据进入 stdout，错误进入 stderr；成功退出码为 0，失败为 1。`--timeout` 默认 10 秒，覆盖连接与读取操作。CLI 仅提供读取功能，删除开关用于 Web 服务。
+
+### 动态 shell 补全
+
+每次补全重新读取配置；`--cluster` 补全集群名称，`ls`、`get`、`stat` 的路径补全实时读取已选集群的直接子节点，末尾保留 `/` 以便继续补全。远端补全最多等待 2 秒，失败时不返回候选。配置文件路径使用 shell 文件补全。
+
+```sh
+# zsh：先初始化 compinit，再加载脚本
+./dist/zookeeper-explorer completion zsh > /tmp/zookeeper-explorer.zsh
+source /tmp/zookeeper-explorer.zsh
+
+# Bash
+./dist/zookeeper-explorer completion bash > /tmp/zookeeper-explorer.bash
+source /tmp/zookeeper-explorer.bash
+```
+
+在 PATH 中可调用 `zookeeper-explorer`，也可使用 `./dist/zookeeper-explorer`，然后按 Tab：
+
+```sh
+./dist/zookeeper-explorer --config config.toml ls --cluster <Tab>
+./dist/zookeeper-explorer --config config.toml --cluster test ls /<Tab>
+```
+
+本次从 Ubuntu 复制的 systemd 配置保存在 `.local-test/ubuntu.service`，其启动参数转换为 `.local-test/config.toml`，可用 `--config .local-test/config.toml` 联调。这些文件权限为 600，目录已加入 Git 忽略规则；不会随构建分发。
+
+
+### 交互式终端浏览器
+
+TUI 使用 Bubble Tea、Bubbles 和 Lip Gloss，可直接复用 CLI 配置：
+
+```sh
+zookeeper-explorer tui
+zookeeper-explorer tui --cluster test
+zookeeper-explorer tui /config --cluster test
+```
+
+多集群且未指定 `--cluster` 时，先显示集群选择列表，不自动连接第一个集群。单集群时直接进入。宽终端左右排列节点列表与详情；宽度不足 90 列时上下排列，最小尺寸为 60 列 × 16 行。
+
+| 按键 | 操作 |
+| --- | --- |
+| ↑ / ↓、j / k | 选择节点，预览数据 |
+| Enter / → | 进入选中的节点 |
+| ← / Backspace | 返回当前节点的父节点 |
+| / | 按名称过滤列表；输入时字母作为过滤条件 |
+| Esc / Ctrl+G | 清除过滤条件 |
+| Tab | 切换节点列表与详情面板 |
+| m | 切换数据与 ZooKeeper Stat 元数据 |
+| r | 刷新当前节点及子节点列表 |
+| c | 返回集群选择列表 |
+| q / Ctrl+C | 退出；过滤输入期间使用 Ctrl+C 退出 |
+
+详情面板支持方向键、PageUp / PageDown 滚动。有效 UTF-8 文本直接显示，JSON 自动缩进；二进制数据以十六进制显示。文本预览最多 64 KiB，二进制预览最多 4 KiB，超限时显示截断提示；完整数据可通过 `get PATH` 读取。节点数据中的终端控制字符会转义。
+
+网络请求在后台执行，受 `--timeout` 限制。切换节点、切换集群或退出时取消旧请求，过期结果不覆盖当前页面。TUI 提供只读浏览，需要交互式终端，不支持 `--output json` 或管道输出；脚本调用使用 `ls`、`get`、`stat`。

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ng-life/zookeeper-explorer/internal/zookeeper"
@@ -35,8 +36,8 @@ func Load(args []string) (Config, error) {
 	var file, listen string
 	var addresses stringFlags
 	var enable, disable bool
-	fs.StringVar(&file, "config", "config.toml", "TOML configuration file")
-	fs.StringVar(&file, "c", "config.toml", "TOML configuration file (short)")
+	fs.StringVar(&file, "config", DefaultPath(), "TOML configuration file")
+	fs.StringVar(&file, "c", DefaultPath(), "TOML configuration file (short)")
 	fs.StringVar(&listen, "listen", "", "Web server bind address")
 	fs.Var(&addresses, "zk", "ZooKeeper ensemble NAME=HOSTS (repeatable)")
 	fs.BoolVar(&enable, "allow-delete", false, "Enable recursive node deletion")
@@ -86,4 +87,21 @@ func Load(args []string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// DefaultPath retains working-directory priority, then falls back to user config.
+// macOS uses ~/.config here rather than os.UserConfigDir's Application Support.
+func DefaultPath() string {
+	if _, err := os.Stat("config.toml"); !os.IsNotExist(err) {
+		return "config.toml"
+	}
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "config.toml"
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "zookeeper-explorer", "config.toml")
 }

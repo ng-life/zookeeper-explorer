@@ -1,6 +1,7 @@
 package zookeeper
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -81,11 +82,26 @@ func (c *rootedClient) Close()                                  { c.conn.Close()
 
 // Connect establishes a session and applies the optional chroot to operations.
 func Connect(address string) (Client, error) {
+	return connect(context.Background(), address, false)
+}
+
+// ConnectContext bounds session establishment and suppresses driver diagnostics.
+func ConnectContext(ctx context.Context, address string) (Client, error) {
+	return connect(ctx, address, true)
+}
+
+func connect(ctx context.Context, address string, quiet bool) (Client, error) {
 	servers, root, err := ParseAddress(address)
 	if err != nil {
 		return nil, err
 	}
-	conn, events, err := zk.Connect(servers, 10*time.Second)
+	var conn *zk.Conn
+	var events <-chan zk.Event
+	if quiet {
+		conn, events, err = zk.Connect(servers, 10*time.Second, zk.WithLogger(quietLogger{}))
+	} else {
+		conn, events, err = zk.Connect(servers, 10*time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -105,9 +121,16 @@ func Connect(address string) (Client, error) {
 				}()
 				return &rootedClient{conn, root}, nil
 			}
+		case <-ctx.Done():
+			conn.Close()
+			return nil, ctx.Err()
 		case <-timer.C:
 			conn.Close()
 			return nil, fmt.Errorf("connection timed out")
 		}
 	}
 }
+
+type quietLogger struct{}
+
+func (quietLogger) Printf(string, ...interface{}) {}
